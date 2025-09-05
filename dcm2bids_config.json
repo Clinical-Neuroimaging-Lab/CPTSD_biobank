@@ -1,0 +1,90 @@
+{
+    "descriptions": [
+        {
+            "datatype": "anat",
+            "suffix": "T1w",
+            "criteria": {
+                "SeriesDescription": "*MP2RAGE*"
+            }
+        },
+        {
+            "datatype": "anat",
+            "suffix": "T1w",
+            "criteria": {
+                "SeriesDescription": "*MP3RAGE*"
+            }
+        },
+        {
+            "datatype": "anat",
+            "suffix": "T2w",
+            "criteria": {
+                "SeriesDescription": "*T2w*SPC*"
+            }
+        },
+        {
+            "datatype": "anat",
+            "suffix": "MEGRE",
+            "criteria": {
+                "SeriesDescription": "*QSM*",
+                "ImageType": ["ORIGINAL", "PRIMARY", "M", "ND"]
+            },
+            "custom_entities": "part-mag"
+        },
+        {
+            "datatype": "anat",
+            "suffix": "MEGRE",
+            "criteria": {
+                "SeriesDescription": "*QSM*",
+                "ImageType": ["ORIGINAL", "PRIMARY", "P", "ND"]
+            },
+            "custom_entities": "part-phase"
+        },
+        {
+            "datatype": "func",
+            "suffix": "bold",
+            "criteria": {
+                "SeriesDescription": "*REST*SMS*"
+            },
+            "custom_entities": "task-rest"
+        },
+        {
+            "datatype": "func",
+            "suffix": "bold",
+            "criteria": {
+                "SeriesDescription": "*sms3*"
+            },
+            "custom_entities": "task-faces"
+        },
+        {
+            "datatype": "func",
+            "suffix": "epi",
+            "criteria": {
+                "SeriesDescription": "*FM_ep2dse_AP*"
+            },
+            "custom_entities": "dir-AP"
+        },
+        {
+            "datatype": "func",
+            "suffix": "epi",
+            "criteria": {
+                "SeriesDescription": "*FM_ep2dse_PA*"
+            },
+            "custom_entities": "dir-PA"
+        },
+        {
+            "datatype": "dwi",
+            "suffix": "dwi",
+            "criteria": {
+                "SeriesDescription": "*ep2d_diff_122*"
+            }
+        },
+        {
+            "datatype": "fmap",
+            "suffix": "epi",
+            "criteria": {
+                "SeriesDescription": "*ep2d_diff_B0_P-A*"
+            },
+            "custom_entities": "dir-PA"
+        }
+    ]
+}
