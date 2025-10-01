@@ -1,0 +1,288 @@
+%%-----------------------------------------------------------------------%%
+%  QSM DICOM Metadata Fixer
+%  Fixes 3D QSM DICOM series to have consistent metadata for NIFTI conversion
+%  Author: L.K.L. Oestreich
+%  Date: 2025 September 
+%%-----------------------------------------------------------------------%%
+clear all; close all; clc;
+
+%%-----------------------------------------------------------------------%%
+% Settings:
+%%-----------------------------------------------------------------------%%
+basepath = '/Users/uqloestr/Library/CloudStorage/OneDrive-TheUniversityofQueensland/Desktop/raw_data';
+participants = 26:29;  % Adjust range as needed
+
+%%-----------------------------------------------------------------------%%
+%% Loop over participants
+%%-----------------------------------------------------------------------%%
+for participant = participants
+    % Format participant ID
+    participant_id = sprintf('sub-%03d', participant);
+    participant_path = fullfile(basepath, participant_id);
+    
+    fprintf('Processing QSM for %s...\n', participant_id);
+    
+    % Check if participant folder exists
+    if ~exist(participant_path, 'dir')
+        fprintf('  Skipping %s - folder not found\n', participant_id);
+        continue;
+    end
+    
+    % Find QSM folders using wildcards
+    qsm_folders = dir(fullfile(participant_path, '*QSM*'));
+    qsm_folders = qsm_folders([qsm_folders.isdir]); % Only directories
+    
+    % Filter out already processed folders
+    qsm_folders = qsm_folders(~contains({qsm_folders.name}, '_FIXED'));
+    
+    fprintf('  Found %d QSM folders\n', length(qsm_folders));
+    
+    if isempty(qsm_folders)
+        fprintf('  Skipping %s - no QSM folders found\n', participant_id);
+        continue;
+    end
+    
+    %% Process each QSM folder
+    for folder_idx = 1:length(qsm_folders)
+        qsm_folder = qsm_folders(folder_idx);
+        folder_path = fullfile(participant_path, qsm_folder.name);
+        
+        fprintf('  Processing folder: %s\n', qsm_folder.name);
+        
+        % Find DICOM files
+        dcm_files = dir(fullfile(folder_path, '*.dcm'));
+        
+        if isempty(dcm_files)
+            fprintf('    No DICOM files found, skipping\n');
+            continue;
+        end
+        
+        n_files = length(dcm_files);
+        fprintf('    Found %d DICOM files\n', n_files);
+        
+        % Check file sizes to determine format
+        file_info = dir(fullfile(folder_path, dcm_files(1).name));
+        size_mb = file_info.bytes / (1024*1024);
+        
+        fprintf('    File size: %.1fMB\n', size_mb);
+        
+        % Determine if this needs fixing (3D format with multiple files)
+        if n_files == 1 && size_mb > 10
+            fprintf('    4D format detected - no fixing needed\n');
+            continue;
+        elseif n_files > 1
+            fprintf('    3D format detected - applying metadata fix\n');
+            format_type = '3D';
+        else
+            fprintf('    Unknown format - skipping\n');
+            continue;
+        end
+        
+        % Check if already processed
+        output_folder = [qsm_folder.name '_FIXED'];
+        output_path = fullfile(participant_path, output_folder);
+        if exist(output_path, 'dir')
+            fprintf('    Already processed - skipping\n');
+            continue;
+        end
+        
+        %% Load and fix 3D QSM data
+        try
+            fprintf('    Loading %d DICOM slices...\n', n_files);
+            
+            % Read metadata from all slices
+            slice_metadata = cell(n_files, 1);
+            for ii = 1:n_files
+                slice_metadata{ii} = dicominfo(fullfile(folder_path, dcm_files(ii).name));
+            end
+            
+            % Load image data
+            % Read first image to get dimensions
+            temp_img = dicomread(fullfile(folder_path, dcm_files(1).name));
+            temp_img = squeeze(temp_img);
+            
+            if ndims(temp_img) == 2
+                [nR, nL] = size(temp_img);
+                im_data = zeros(nR, nL, n_files);
+                
+                % Load all slices
+                for ii = 1:n_files
+                    temp = squeeze(dicomread(fullfile(folder_path, dcm_files(ii).name)));
+                    im_data(:, :, ii) = temp;
+                end
+            else
+                % Already 3D in single file
+                im_data = temp_img;
+            end
+            
+            fprintf('    Loaded image data: %dx%dx%d\n', size(im_data,1), size(im_data,2), size(im_data,3));
+            
+        catch ME
+            fprintf('    Error loading images: %s\n', ME.message);
+            continue;
+        end
+        
+        %% Create output directory and write fixed DICOM files
+        if ~exist(output_path, 'dir')
+            mkdir(output_path);
+        end
+        
+        fprintf('    Writing %d fixed DICOM files...\n', size(im_data,3));
+        
+        % Generate consistent UIDs for the entire series
+        series_instance_uid = dicomuid;
+        study_instance_uid = '';
+        frame_of_reference_uid = '';
+        
+        try
+            study_instance_uid = slice_metadata{1}.StudyInstanceUID;
+            if isfield(slice_metadata{1}, 'FrameOfReferenceUID')
+                frame_of_reference_uid = slice_metadata{1}.FrameOfReferenceUID;
+            end
+        catch
+            study_instance_uid = dicomuid;
+            frame_of_reference_uid = dicomuid;
+        end
+        
+        % Write fixed DICOM files
+        for ii = 1:size(im_data,3)
+            try
+                % Use original metadata if available, otherwise use first slice
+                if ii <= length(slice_metadata)
+                    metadata = slice_metadata{ii};
+                else
+                    metadata = slice_metadata{1};
+                end
+                
+                % Clean problematic fields
+                fields_to_remove = {'Group', 'Element', 'VR', 'Length', 'Data'};
+                for field_idx = 1:length(fields_to_remove)
+                    if isfield(metadata, fields_to_remove{field_idx})
+                        metadata = rmfield(metadata, fields_to_remove{field_idx});
+                    end
+                end
+                
+                % Update critical metadata for proper series grouping
+                try
+                    if ~contains(metadata.SeriesDescription, '_FIXED')
+                        metadata.SeriesDescription = [metadata.SeriesDescription '_FIXED'];
+                    end
+                catch
+                    metadata.SeriesDescription = 'QSM_FIXED';
+                end
+                
+                % Consistent series identification
+                metadata.SeriesNumber = metadata.SeriesNumber + 1000; % Avoid conflicts
+                metadata.SeriesInstanceUID = series_instance_uid;  % CRITICAL: Same for all slices
+                metadata.StudyInstanceUID = study_instance_uid;
+                
+                % Unique instance identification
+                metadata.InstanceNumber = ii;
+                metadata.SOPInstanceUID = dicomuid;  % Unique for each slice
+                metadata.MediaStorageSOPInstanceUID = metadata.SOPInstanceUID;
+                
+                % Frame of reference
+                if ~isempty(frame_of_reference_uid)
+                    metadata.FrameOfReferenceUID = frame_of_reference_uid;
+                end
+                
+                % Ensure proper slice positioning
+                if isfield(metadata, 'SliceThickness')
+                    slice_thickness = metadata.SliceThickness;
+                else
+                    slice_thickness = 1.0;
+                end
+                
+                % Calculate slice positions
+                if isfield(metadata, 'ImagePositionPatient') && length(metadata.ImagePositionPatient) == 3
+                    % Preserve original position for this slice
+                    if ii > length(slice_metadata)
+                        % Extrapolate position for additional slices
+                        metadata.ImagePositionPatient(3) = slice_metadata{1}.ImagePositionPatient(3) + (ii-1) * slice_thickness;
+                    end
+                    metadata.SliceLocation = metadata.ImagePositionPatient(3);
+                else
+                    % Create default position
+                    metadata.ImagePositionPatient = [0; 0; (ii-1) * slice_thickness];
+                    metadata.SliceLocation = (ii-1) * slice_thickness;
+                end
+                
+                % Additional metadata for proper reconstruction
+                metadata.ImagesInAcquisition = size(im_data,3);
+                
+                % Ensure proper data type fields
+                metadata.BitsAllocated = 16;
+                metadata.BitsStored = 16;
+                metadata.HighBit = 15;
+                metadata.PixelRepresentation = 0;  % Unsigned
+                
+                % Write DICOM file
+                dicom_filename = fullfile(output_path, sprintf('qsm_fixed_%03d.dcm', ii));
+                
+                try
+                    % Convert to appropriate data type
+                    img_slice = squeeze(im_data(:, :, ii));
+                    
+                    % Handle different input data types
+                    if isa(img_slice, 'double') || isa(img_slice, 'single')
+                        % Scale to uint16 range if needed
+                        img_slice = img_slice - min(img_slice(:));
+                        if max(img_slice(:)) > 0
+                            img_slice = img_slice / max(img_slice(:)) * 4095; % Scale to 12-bit range
+                        end
+                    end
+                    
+                    dicomwrite(uint16(img_slice), dicom_filename, metadata);
+                    
+                catch ME
+                    fprintf('      Warning: DICOM write failed for slice %d, trying minimal metadata: %s\n', ii, ME.message);
+                    
+                    % Fallback with essential metadata
+                    minimal_metadata = struct();
+                    minimal_metadata.SeriesDescription = 'QSM_FIXED';
+                    minimal_metadata.SeriesNumber = 2000 + folder_idx;
+                    minimal_metadata.SeriesInstanceUID = series_instance_uid;
+                    minimal_metadata.StudyInstanceUID = study_instance_uid;
+                    minimal_metadata.InstanceNumber = ii;
+                    minimal_metadata.SOPInstanceUID = dicomuid;
+                    minimal_metadata.ImagesInAcquisition = size(im_data,3);
+                    minimal_metadata.SliceLocation = (ii-1) * 1.0;
+                    minimal_metadata.ImagePositionPatient = [0; 0; (ii-1) * 1.0];
+                    minimal_metadata.BitsAllocated = 16;
+                    minimal_metadata.BitsStored = 16;
+                    minimal_metadata.HighBit = 15;
+                    minimal_metadata.PixelRepresentation = 0;
+                    
+                    dicomwrite(uint16(img_slice), dicom_filename, minimal_metadata);
+                end
+                
+            catch ME
+                fprintf('      Error: Failed to write slice %d: %s\n', ii, ME.message);
+            end
+        end
+        
+        %% Verify DICOM series consistency
+        fprintf('    Verifying DICOM series consistency...\n');
+        try
+            test_files = dir(fullfile(output_path, '*.dcm'));
+            if length(test_files) >= 2
+                meta1 = dicominfo(fullfile(output_path, test_files(1).name));
+                meta2 = dicominfo(fullfile(output_path, test_files(2).name));
+                
+                if strcmp(meta1.SeriesInstanceUID, meta2.SeriesInstanceUID)
+                    fprintf('      ✓ Series consistency verified\n');
+                else
+                    fprintf('      ✗ Warning: Series UID mismatch detected\n');
+                end
+            end
+        catch
+            fprintf('      Warning: Could not verify series consistency\n');
+        end
+        
+        fprintf('    Completed folder %s - processed %d slices\n', qsm_folder.name, size(im_data,3));
+    end
+    
+    fprintf('  Completed %s\n', participant_id);
+end
+
+fprintf('All QSM metadata fixing completed!\n');
